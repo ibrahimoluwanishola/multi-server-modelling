@@ -5,6 +5,7 @@ import { Target, CheckCircle, AlertTriangle, RefreshCw } from "lucide-react";
 import { MetricCard } from "@/components/queue/ResultsCard";
 import { NumberField } from "@/components/ui/NumberField";
 import { OptimizationResult } from "@/lib/optimization";
+import { fmtNum, fmtMinutes } from "@/lib/format";
 
 export default function OptimizationPage() {
     const [loading, setLoading] = useState(false);
@@ -16,6 +17,12 @@ export default function OptimizationPage() {
     });
     const [result, setResult] = useState<OptimizationResult | null>(null);
     const [error, setError] = useState<string | null>(null);
+
+    // Avoids an "∞ min" display -- infinity has no meaningful finite unit.
+    const fmtMin = (hours: number | null | undefined) => {
+        const formatted = fmtMinutes(hours);
+        return formatted === "\u221e" ? formatted : `${formatted} min`;
+    };
 
     const handleOptimize = async () => {
         setError(null);
@@ -120,15 +127,48 @@ export default function OptimizationPage() {
                                                 ? `With ${result.optimalC} doctors, the average wait time is ${(result.metrics.Wq * 60).toFixed(1)} minutes, meeting your target of < ${(inputs.targetWq * 60).toFixed(0)} mins.`
                                                 : `Could not meet the target within the max servers considered (${inputs.maxC}). Try raising the target wait time or the max doctor count.`}
                                         </p>
+                                        {!result.found && (
+                                            <p className="text-slate-500 text-sm mt-3 pt-3 border-t border-red-200">
+                                                {result.metrics.rho >= 1 ? (
+                                                    inputs.lambda > inputs.maxC * inputs.mu ? (
+                                                        <>
+                                                            <strong>Why:</strong> at {inputs.maxC} doctors, this department can treat at most{" "}
+                                                            {(inputs.maxC * inputs.mu).toFixed(0)} patients/hour, but {inputs.lambda} are
+                                                            arriving — literally more than it can ever treat, even with zero patients waiting.
+                                                            The queue grows without end, so the wait time is mathematically infinite
+                                                            (utilization {(result.metrics.rho * 100).toFixed(0)}%). This needs meaningfully
+                                                            more doctors, not just one or two more.
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <strong>Why:</strong> at {inputs.maxC} doctors, this department can treat exactly{" "}
+                                                            {(inputs.maxC * inputs.mu).toFixed(0)} patients/hour, and {inputs.lambda} are
+                                                            arriving — the same number, not more. That sounds like it should just barely work,
+                                                            but it doesn&apos;t: patients don&apos;t arrive at perfectly even intervals, so
+                                                            there&apos;s no spare capacity to absorb random busier stretches. Over time the
+                                                            queue still grows without bound (utilization exactly 100%). Even one additional
+                                                            doctor of spare capacity fixes this.
+                                                        </>
+                                                    )
+                                                ) : (
+                                                    <>
+                                                        <strong>Why:</strong> even fully staffed at {inputs.maxC} doctors, the average wait is{" "}
+                                                        {fmtMin(result.metrics.Wq)} — still above your {(inputs.targetWq * 60).toFixed(0)}-minute
+                                                        target. The department is stable (utilization {(result.metrics.rho * 100).toFixed(0)}%),
+                                                        it just needs either a higher doctor limit to search, or a more relaxed target.
+                                                    </>
+                                                )}
+                                            </p>
+                                        )}
                                     </div>
                                 </div>
                             </div>
 
                             <div className="grid grid-cols-2 gap-4">
                                 <MetricCard label="Resulting Utilization" value={`${(result.metrics.rho * 100).toFixed(1)}%`} highlight={result.metrics.rho > 0.8} />
-                                <MetricCard label="Avg Queue Length" value={result.metrics.Lq.toFixed(2)} />
-                                <MetricCard label="Avg Wait (Wq)" value={`${(result.metrics.Wq * 60).toFixed(1)} min`} subtext={`Target: < ${(inputs.targetWq * 60).toFixed(0)} min`} highlight />
-                                <MetricCard label="System Time (W)" value={`${(result.metrics.W * 60).toFixed(1)} min`} />
+                                <MetricCard label="Avg Queue Length" value={fmtNum(result.metrics.Lq, 2)} />
+                                <MetricCard label="Avg Wait (Wq)" value={fmtMin(result.metrics.Wq)} subtext={`Target: < ${(inputs.targetWq * 60).toFixed(0)} min`} highlight />
+                                <MetricCard label="System Time (W)" value={fmtMin(result.metrics.W)} />
                             </div>
                         </div>
                     )}

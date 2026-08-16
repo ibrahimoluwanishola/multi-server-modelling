@@ -6,6 +6,7 @@ import { ReplicatedSimulationResult } from "@/types/queue";
 import { MetricCard } from "@/components/queue/ResultsCard";
 import { NumberField } from "@/components/ui/NumberField";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Legend } from "recharts";
+import { fmtNum, fmtMinutes } from "@/lib/format";
 
 export default function SimulationPage() {
     const [loading, setLoading] = useState(false);
@@ -47,7 +48,17 @@ export default function SimulationPage() {
     const recommendedDoctors = Math.max(inputs.c, Math.ceil(inputs.lambda / (inputs.mu * 0.82)));
     const expectedServiceMins = Math.max(1, (1 / inputs.mu) * 60).toFixed(0);
 
-    const fmtMinutes = (hours: number) => `${(hours * 60).toFixed(2)} min`;
+    // Avoids an "∞ min" display -- infinity has no meaningful finite unit.
+    // Also the single place this page formats minutes, so every call site
+    // (both simulated values, which are always finite, and theoretical
+    // values, which can be null for an unstable configuration) is safe by
+    // construction rather than relying on a manual Infinity check at each
+    // call site -- which is exactly what broke before (checking `!== Infinity`
+    // against a value that actually arrives over JSON as `null`, not `Infinity`).
+    const fmtMin = (hours: number | null | undefined) => {
+        const formatted = fmtMinutes(hours, 2);
+        return formatted === "\u221e" ? formatted : `${formatted} min`;
+    };
     const fmtCI = (ci: { mean: number; marginOfError: number }, formatter: (n: number) => string) =>
         `${formatter(ci.mean)} ± ${formatter(ci.marginOfError)}`;
 
@@ -136,20 +147,37 @@ export default function SimulationPage() {
                                 />
                                 <MetricCard
                                     label="Avg Wait (Wq)"
-                                    value={fmtMinutes(result.Wq.mean)}
-                                    subtext={`Theory: ${result.theoretical.Wq !== Infinity ? fmtMinutes(result.theoretical.Wq) : "∞"}`}
+                                    value={fmtMin(result.Wq.mean)}
+                                    subtext={`Theory: ${fmtMin(result.theoretical.Wq)}`}
                                 />
                                 <MetricCard
                                     label="Queue Length (Lq)"
                                     value={result.Lq.mean.toFixed(2)}
-                                    subtext={`Theory: ${result.theoretical.Lq !== Infinity ? result.theoretical.Lq.toFixed(2) : "∞"}`}
+                                    subtext={`Theory: ${fmtNum(result.theoretical.Lq, 2)}`}
                                 />
                                 <MetricCard
                                     label="System Time (W)"
-                                    value={fmtMinutes(result.W.mean)}
-                                    subtext={`Theory: ${result.theoretical.W !== Infinity ? fmtMinutes(result.theoretical.W) : "∞"}`}
+                                    value={fmtMin(result.W.mean)}
+                                    subtext={`Theory: ${fmtMin(result.theoretical.W)}`}
                                 />
                             </div>
+
+                            {!result.theoretical.stable && (
+                                <div className="bg-red-50 border-l-4 border-red-500 rounded-xl p-4 text-sm text-slate-700">
+                                    <strong className="text-red-700">This configuration is unstable.</strong> With {inputs.c} doctor
+                                    {inputs.c === 1 ? "" : "s"} at μ={inputs.mu}/hr each, this department can treat{" "}
+                                    {inputs.lambda > inputs.c * inputs.mu ? "at most " : "exactly "}
+                                    {(inputs.c * inputs.mu).toFixed(0)} patients/hour — {inputs.lambda > inputs.c * inputs.mu
+                                        ? `but λ=${inputs.lambda} are arriving, literally more than it can ever treat.`
+                                        : `and λ=${inputs.lambda} are arriving, the same number, not more. That sounds like it should just barely work, but patients don't arrive at perfectly even intervals, so there's no spare capacity to absorb random busier stretches.`}
+                                    {" "}The queue grows without end either way, so the true long-run wait
+                                    time is infinite (utilization {(result.theoretical.rho * 100).toFixed(0)}%, shown as{" "}
+                                    <strong>∞</strong> above). The simulated numbers below are still large finite values, not ∞ &mdash;
+                                    that&apos;s not a contradiction, it&apos;s because the simulation only runs for {inputs.duration}{" "}
+                                    hours, so the queue hasn&apos;t had infinite time to grow yet. Reduce λ, or increase the number of
+                                    doctors, to reach a stable configuration.
+                                </div>
+                            )}
 
                             <div className="bg-white p-6 rounded-xl border border-slate-100">
                                 <div className="flex items-center justify-between mb-2">
@@ -195,17 +223,17 @@ export default function SimulationPage() {
                                         <ResultRow
                                             label="Avg Queue Length (Lq)"
                                             sim={fmtCI(result.Lq, (n) => n.toFixed(3))}
-                                            theo={result.theoretical.Lq !== Infinity ? result.theoretical.Lq.toFixed(3) : "∞"}
+                                            theo={fmtNum(result.theoretical.Lq, 3)}
                                         />
                                         <ResultRow
                                             label="Avg Wait in Queue (Wq)"
-                                            sim={fmtCI(result.Wq, fmtMinutes)}
-                                            theo={result.theoretical.Wq !== Infinity ? fmtMinutes(result.theoretical.Wq) : "∞"}
+                                            sim={fmtCI(result.Wq, (n) => fmtMinutes(n, 2) + " min")}
+                                            theo={fmtMin(result.theoretical.Wq)}
                                         />
                                         <ResultRow
                                             label="Avg System Time (W)"
-                                            sim={fmtCI(result.W, fmtMinutes)}
-                                            theo={result.theoretical.W !== Infinity ? fmtMinutes(result.theoretical.W) : "∞"}
+                                            sim={fmtCI(result.W, (n) => fmtMinutes(n, 2) + " min")}
+                                            theo={fmtMin(result.theoretical.W)}
                                         />
                                     </tbody>
                                 </table>
